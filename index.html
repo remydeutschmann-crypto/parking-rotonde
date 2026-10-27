@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#123b35">
+<title>Parkings de Strasbourg — places disponibles</title>
+<style>
+:root{color-scheme:light;--ink:#17332e;--muted:#64736f;--bg:#f3f6f3;--card:#fff;--line:#dce5df;--green:#19724e;--orange:#b66a10;--red:#bd3838}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(145deg,#e6eee8,#f8faf8 60%);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);display:grid;place-items:center;padding:20px}
+main{width:min(100%,520px)}.eyebrow{font-size:.78rem;font-weight:750;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}.card{background:var(--card);border:1px solid var(--line);border-radius:26px;padding:clamp(22px,6vw,36px);box-shadow:0 18px 50px #163b2b12}.heading{display:flex;align-items:center;gap:15px}.symbol{width:58px;height:58px;border-radius:18px;background:#e5f1e8;display:grid;place-items:center;font-size:29px;flex-shrink:0}.selector{display:block;margin:22px 0 0}.selector label{display:block;font-size:.88rem;font-weight:700;margin-bottom:8px}.selector select{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);font:inherit}.heading h1{font-size:clamp(1.5rem,5vw,2rem);margin:0;letter-spacing:-.04em}.sub{margin:5px 0 0;color:var(--muted);font-size:.95rem}.status{display:inline-flex;align-items:center;gap:8px;border-radius:99px;padding:8px 12px;background:#eef3ef;color:var(--muted);font-size:.88rem;font-weight:700;margin-top:26px}.dot{width:9px;height:9px;border-radius:50%;background:currentColor}.number{font-size:clamp(4.5rem,20vw,7rem);font-weight:800;line-height:1;letter-spacing:-.075em;margin:20px 0 4px;font-variant-numeric:tabular-nums}.unit{font-size:1.05rem;color:var(--muted)}.bar-wrap{height:10px;background:#e9eeea;border-radius:99px;overflow:hidden;margin:25px 0 10px}.bar{height:100%;width:0;background:var(--green);border-radius:99px;transition:width .4s ease}.stats{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:.9rem}.stats strong{color:var(--ink)}.actions{display:flex;gap:10px;margin-top:28px}.btn{border:0;border-radius:13px;padding:13px 16px;font:inherit;font-weight:700;cursor:pointer}.primary{background:var(--ink);color:white;flex:1}.primary:disabled{opacity:.6;cursor:wait}.secondary{background:#eef3ef;color:var(--ink)}.foot{font-size:.8rem;color:var(--muted);line-height:1.55;margin:18px 2px 0}.foot a{color:inherit}.error{color:var(--red);font-size:.9rem;margin-top:14px;display:none}.small{font-size:.82rem;color:var(--muted);margin-top:12px}.offline .number{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Stationnement · Strasbourg</p>
+  <section class="card" aria-live="polite">
+    <div class="heading"><div class="symbol" aria-hidden="true">🅿️</div><div><h1 id="parkingTitle">Parking Rotonde</h1><p class="sub">Places disponibles en temps réel</p></div></div>
+    <div class="selector"><label for="parkingSelect">Choisir un parking</label><select id="parkingSelect"><option value="">Chargement des parkings…</option></select></div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">Chargement des données…</span></div>
+    <div class="number" id="free">—</div><div class="unit">places libres</div>
+    <div class="bar-wrap" role="progressbar" aria-label="Taux d'occupation" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress"><div class="bar" id="bar"></div></div>
+    <div class="stats"><span>Capacité : <strong id="total">—</strong></span><span>Occupées : <strong id="occupied">—</strong></span></div>
+    <div class="error" id="error"></div>
+    <div class="actions"><button class="btn primary" id="refresh">↻ Actualiser</button><button class="btn secondary" id="source">Source des données ↗</button></div>
+    <p class="small" id="updated">Dernière récupération : —</p>
+  </section>
+  <p class="foot">Données fournies par l’Eurométropole de Strasbourg. Choisis un parking dans la liste ; les données sont actualisées automatiquement toutes les 3 minutes. Si une adresse de l’API est momentanément indisponible, la page essaie automatiquement une autre adresse officielle. <a href="https://data.strasbourg.eu/explore/dataset/occupation-parkings-temps-reel/" target="_blank" rel="noopener">Voir le jeu de données</a>.</p>
+</main>
+<script>
+// Les données sont récupérées par une fonction Netlify pour éviter les blocages CORS.
+const API_URLS = [
+  'https://data.strasbourg.eu/api/explore/v2.1/catalog/datasets/occupation-parkings-temps-reel/records?limit=100',
+  'https://opendata.strasbourg.eu/api/explore/v2.1/catalog/datasets/occupation-parkings-temps-reel/records?limit=100'
+];
+const $ = id => document.getElementById(id);
+const normalize = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function numeric(v) { if (v === null || v === undefined || v === '') return null; const n = Number(String(v).replace(/\s/g,'').replace(',','.')); return Number.isFinite(n) ? n : null; }
+function showError(msg) { $('error').textContent = msg; $('error').style.display = 'block'; }
+let parkingRecords = [];
+function fieldsOf(r) { return r?.record?.fields || r?.fields || r?.record || r || {}; }
+function field(r, wanted) {
+  const obj = fieldsOf(r);
+  const key = Object.keys(obj).find(k => normalize(k).replace(/_/g,'') === normalize(wanted).replace(/_/g,''));
+  return key ? obj[key] : undefined;
+}
+function parkingName(r) { return String(field(r,'nom_parking') ?? field(r,'name') ?? '').trim(); }
+function populateParkings(records) {
+  const select = $('parkingSelect');
+  const names = [...new Set(records.map(parkingName).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
+  if (!names.length) throw new Error('Aucun parking trouvé dans la réponse de l’API.');
+  const previous = select.value;
+  select.innerHTML = '';
+  names.forEach(name => { const option = document.createElement('option'); option.value = name; option.textContent = name; select.appendChild(option); });
+  select.value = names.includes(previous) ? previous : (names.find(n=>normalize(n)==='parking rotonde') || names[0]);
+  $('parkingTitle').textContent = select.value;
+}
+function setStatus(text, color) { $('statusText').textContent = text; $('status').style.color = color; }
+async function fetchData() {
+  const response = await fetch('/.netlify/functions/parkings', {cache:'no-store', headers:{'Accept':'application/json'}});
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || ('Erreur serveur HTTP ' + response.status));
+  return {data: body, via: 'serveur'};
+}
+async function refresh() {
+  const btn = $('refresh'); btn.disabled = true; btn.textContent = '↻ Actualisation…'; $('error').style.display = 'none';
+  try {
+    const result = await fetchData(); const data = result.data;
+    const rawRecords = data.results || data.records || data.data || (Array.isArray(data) ? data : []);
+    const records = Array.isArray(rawRecords) ? rawRecords.map(r => fieldsOf(r)) : [];
+    // La liste complète sert à alimenter la listbox, puis on affiche le parking sélectionné.
+    if (!parkingRecords.length || !records.some(r => parkingName(r) === $('parkingSelect').value)) { parkingRecords = records; populateParkings(parkingRecords); }
+    else parkingRecords = records;
+    const selectedName = $('parkingSelect').value;
+    const record = records.find(r => parkingName(r) === selectedName);
+    if (!record) throw new Error('Le parking sélectionné est introuvable dans la réponse de l’API.');
+    $('parkingTitle').textContent = selectedName;
+    const free = numeric(record.libre ?? record.Libre ?? record.infoappli ?? record.InfoAppli);
+    const total = numeric(record.total ?? record.Total);
+    if (free === null || total === null) throw new Error('L’API ne renvoie pas les champs nécessaires (libre/total). Champs reçus : ' + Object.keys(fieldsOf(record)).join(', ') + '. Réessayez plus tard ou consultez la source officielle.');
+    const occupied = Math.max(0, total - free);
+    const pct = total > 0 ? Math.min(100, Math.max(0, occupied / total * 100)) : 0;
+    $('free').textContent = Math.max(0, Math.round(free)).toLocaleString('fr-FR');
+    $('total').textContent = Math.round(total).toLocaleString('fr-FR');
+    $('occupied').textContent = Math.round(occupied).toLocaleString('fr-FR');
+    $('bar').style.width = pct + '%'; $('progress').setAttribute('aria-valuenow', Math.round(pct));
+    document.querySelector('.card').classList.remove('offline');
+    const state = normalize(record.etat_descriptif || '');
+    if (state && state !== 'ouvert') setStatus('État : ' + record.etat_descriptif, '#64736f');
+    else if (free <= 0) setStatus('Complet', '#bd3838');
+    else if (free < total * .15) setStatus('Peu de places disponibles', '#b66a10');
+    else setStatus('Places disponibles', '#19724e');
+    $('updated').textContent = 'Dernière récupération : ' + new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) + (result.via === 'relais' ? ' (via relais)' : '');
+    if (result.via === 'relais') showError('Données récupérées via un relais, car la lecture directe a été refusée par le navigateur.');
+  } catch (err) {
+    document.querySelector('.card').classList.add('offline'); setStatus('Données non actualisées', '#bd3838');
+    showError((err.message || String(err)) + ' Ouvrez la source officielle pour consulter les données.');
+  } finally { btn.disabled = false; btn.textContent = '↻ Actualiser'; }
+}
+$('refresh').addEventListener('click', refresh);
+$('parkingSelect').addEventListener('change', () => { $('parkingTitle').textContent = $('parkingSelect').value; refresh(); });
+$('source').addEventListener('click', () => window.open('https://data.strasbourg.eu/explore/dataset/occupation-parkings-temps-reel/','_blank','noopener'));
+refresh(); setInterval(refresh, 3*60*1000);
+</script>
+</body>
+</html>
